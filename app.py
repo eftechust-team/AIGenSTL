@@ -152,9 +152,36 @@ def generate_stl_from_points(points, width, height, z_offset, thickness):
         if has_neighbor or len(points) < 100:
             filtered_points.add((x, y))
 
+    # Dilate points by a few pixels to close tiny gaps
+    def dilate_points(src_points, radius=2):
+        mask = [bytearray(width) for _ in range(height)]
+        for x, y in src_points:
+            if 0 <= x < width and 0 <= y < height:
+                mask[y][x] = 1
+        expanded = [bytearray(width) for _ in range(height)]
+        for y in range(height):
+            for x in range(width):
+                if mask[y][x]:
+                    for dy in range(-radius, radius+1):
+                        for dx in range(-radius, radius+1):
+                            if dx*dx + dy*dy > radius*radius:
+                                continue
+                            ny, nx = y + dy, x + dx
+                            if 0 <= nx < width and 0 <= ny < height:
+                                expanded[ny][nx] = 1
+        out = set()
+        for y in range(height):
+            row = expanded[y]
+            for x in range(width):
+                if row[x]:
+                    out.add((x, y))
+        return out
+
+    grown_points = dilate_points(filtered_points, radius=2)
+
     # Downsample into blocks: mark block occupied if any pixel inside
     blocks = set()
-    for x, y in filtered_points:
+    for x, y in grown_points:
         bx, by = x // block, y // block
         blocks.add((bx, by))
 

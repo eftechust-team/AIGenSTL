@@ -978,6 +978,27 @@
             let selectionMask = new Uint8Array(canvas.width * canvas.height); // 1 = selected, 0 = not selected
             let undoStackSelection = [];
             let redoStackSelection = [];
+            // Expand selection helper (morphological dilation)
+            function expandMask(radius = 2) {
+                const w = canvas.width, h = canvas.height;
+                const expanded = new Uint8Array(w * h);
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        if (selectionMask[y * w + x] === 1) {
+                            for (let dy = -radius; dy <= radius; dy++) {
+                                for (let dx = -radius; dx <= radius; dx++) {
+                                    if (dx * dx + dy * dy > radius * radius) continue;
+                                    const nx = x + dx, ny = y + dy;
+                                    if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                                        expanded[ny * w + nx] = 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                selectionMask = expanded;
+            }
             
             // Initialize from existing selection if any
             if (currentSelection) {
@@ -1039,6 +1060,8 @@
                 lassoPath.push([x, y]);
                 
                 // Show real-time preview with current selection mask
+                // Slightly expand selection to avoid tiny gaps
+                expandMask(2);
                 redrawWithSelection();
                 
                 // Draw lasso path
@@ -1098,6 +1121,8 @@
                     }
                 }
                 
+                // Slightly expand selection to avoid tiny gaps
+                expandMask(2);
                 redrawWithSelection();
                 
                 // Draw selection outline

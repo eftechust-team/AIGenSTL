@@ -129,14 +129,17 @@ def generate_stl():
         return jsonify({'error': str(e)})
 
 def generate_stl_from_points(points, width, height, z_offset, thickness):
-    """Generate STL file from 2D black points by extruding them into 3D.
-    Creates a manifold mesh by only generating exterior faces.
+    """Generate STL from 2D points as a manifold mesh with reduced triangles.
+    - Removes isolated pixels
+    - Downsamples to 2px blocks to cut triangle count
+    - Emits only exterior faces
     """
     scale = 0.1  # mm per pixel
+    block = 2    # downsample factor to reduce triangle count
 
     solid_name = "layer"
     stl = f"solid {solid_name}\n"
-    
+
     # Filter out isolated pixels to smooth edges
     point_set = set(points)
     filtered_points = set()
@@ -148,95 +151,54 @@ def generate_stl_from_points(points, width, height, z_offset, thickness):
                 break
         if has_neighbor or len(points) < 100:
             filtered_points.add((x, y))
-    
-    # Build voxel set
-    voxels = set(filtered_points)
-    
-    # Generate only exterior faces (manifold mesh)
-    # For each voxel, check if each face is exposed (neighbor doesn't exist)
-    for x, y in voxels:
-        x3d = x * scale
-        y3d = (height - y) * scale
+
+    # Downsample into blocks: mark block occupied if any pixel inside
+    blocks = set()
+    for x, y in filtered_points:
+        bx, by = x // block, y // block
+        blocks.add((bx, by))
+
+    size = block * scale  # block size in mm
+
+    # Emit only exterior faces per block
+    for bx, by in blocks:
+        x3d = bx * block * scale
+        y3d = (height - (by * block)) * scale
         z_bottom = z_offset
         z_top = z_offset + thickness
-        size = scale
-        
-        # Bottom face (z = z_bottom) - always visible
-        stl += create_triangle(
-            [x3d, y3d, z_bottom],
-            [x3d + size, y3d + size, z_bottom],
-            [x3d + size, y3d, z_bottom]
-        )
-        stl += create_triangle(
-            [x3d, y3d, z_bottom],
-            [x3d, y3d + size, z_bottom],
-            [x3d + size, y3d + size, z_bottom]
-        )
-        
-        # Top face (z = z_top) - always visible
-        stl += create_triangle(
-            [x3d, y3d, z_top],
-            [x3d + size, y3d, z_top],
-            [x3d + size, y3d + size, z_top]
-        )
-        stl += create_triangle(
-            [x3d, y3d, z_top],
-            [x3d + size, y3d + size, z_top],
-            [x3d, y3d + size, z_top]
-        )
-        
-        # Front face (y-): only if no neighbor at (x, y-1)
-        if (x, y - 1) not in voxels:
-            stl += create_triangle(
-                [x3d, y3d, z_bottom],
-                [x3d + size, y3d, z_top],
-                [x3d + size, y3d, z_bottom]
-            )
-            stl += create_triangle(
-                [x3d, y3d, z_bottom],
-                [x3d, y3d, z_top],
-                [x3d + size, y3d, z_top]
-            )
-        
-        # Back face (y+): only if no neighbor at (x, y+1)
-        if (x, y + 1) not in voxels:
-            stl += create_triangle(
-                [x3d, y3d + size, z_bottom],
-                [x3d + size, y3d + size, z_bottom],
-                [x3d + size, y3d + size, z_top]
-            )
-            stl += create_triangle(
-                [x3d, y3d + size, z_bottom],
-                [x3d + size, y3d + size, z_top],
-                [x3d, y3d + size, z_top]
-            )
-        
-        # Left face (x-): only if no neighbor at (x-1, y)
-        if (x - 1, y) not in voxels:
-            stl += create_triangle(
-                [x3d, y3d, z_bottom],
-                [x3d, y3d + size, z_top],
-                [x3d, y3d, z_top]
-            )
-            stl += create_triangle(
-                [x3d, y3d, z_bottom],
-                [x3d, y3d + size, z_bottom],
-                [x3d, y3d + size, z_top]
-            )
-        
-        # Right face (x+): only if no neighbor at (x+1, y)
-        if (x + 1, y) not in voxels:
-            stl += create_triangle(
-                [x3d + size, y3d, z_bottom],
-                [x3d + size, y3d, z_top],
-                [x3d + size, y3d + size, z_top]
-            )
-            stl += create_triangle(
-                [x3d + size, y3d, z_bottom],
-                [x3d + size, y3d + size, z_top],
-                [x3d + size, y3d + size, z_bottom]
-            )
-    
+
+        # Bottom (always)
+        stl += create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d, z_bottom], [x3d + size, y3d - size, z_bottom])
+        stl += create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d - size, z_bottom], [x3d, y3d - size, z_bottom])
+
+        # Top (always)
+        stl += create_triangle([x3d, y3d, z_top], [x3d + size, y3d - size, z_top], [x3d + size, y3d, z_top])
+        stl += create_triangle([x3d, y3d, z_top], [x3d, y3d - size, z_top], [x3d + size, y3d - size, z_top])
+
+        # Helper to check neighbor
+        def has_neighbor(dx, dy):
+            return (bx + dx, by + dy) in blocks
+
+        # Front (negative y in canvas after flip)
+        if not has_neighbor(0, -1):
+            stl += create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d, z_top], [x3d + size, y3d, z_bottom])
+            stl += create_triangle([x3d, y3d, z_bottom], [x3d, y3d, z_top], [x3d + size, y3d, z_top])
+
+        # Back (positive y)
+        if not has_neighbor(0, 1):
+            stl += create_triangle([x3d, y3d - size, z_bottom], [x3d + size, y3d - size, z_bottom], [x3d + size, y3d - size, z_top])
+            stl += create_triangle([x3d, y3d - size, z_bottom], [x3d + size, y3d - size, z_top], [x3d, y3d - size, z_top])
+
+        # Left (negative x)
+        if not has_neighbor(-1, 0):
+            stl += create_triangle([x3d, y3d, z_bottom], [x3d, y3d - size, z_top], [x3d, y3d, z_top])
+            stl += create_triangle([x3d, y3d, z_bottom], [x3d, y3d - size, z_bottom], [x3d, y3d - size, z_top])
+
+        # Right (positive x)
+        if not has_neighbor(1, 0):
+            stl += create_triangle([x3d + size, y3d, z_bottom], [x3d + size, y3d, z_top], [x3d + size, y3d - size, z_top])
+            stl += create_triangle([x3d + size, y3d, z_bottom], [x3d + size, y3d - size, z_top], [x3d + size, y3d - size, z_bottom])
+
     stl += f"endsolid {solid_name}\n"
     return stl
 

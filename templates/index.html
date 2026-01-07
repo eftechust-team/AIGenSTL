@@ -445,10 +445,9 @@
                             <div id="lassoOptions" style="display:none;">
                                 <label style="width: 100%;">
                                     <select id="lassoMode" style="width:100%; box-sizing: border-box;">
-                                        <option value="dominant">Dominant Color Only</option>
+                                        <option value="all">All Pixels in Area</option>
                                         <option value="black">Black Area Only</option>
                                         <option value="white">White Area Only</option>
-                                        <option value="all">All Pixels in Area</option>
                                     </select>
                                 </label>
                             </div>
@@ -1013,7 +1012,7 @@
                 for (let i = 0; i < selectionMask.length; i++) {
                     if (selectionMask[i] === 1) {
                         const idx = i * 4;
-                        data[idx] = 100; data[idx+1] = 150; data[idx+2] = 255; data[idx+3] = 100;
+                        data[idx] = 60; data[idx+1] = 130; data[idx+2] = 255; data[idx+3] = 70;
                     }
                 }
                 ctx.putImageData(overlayData, 0, 0);
@@ -1054,7 +1053,7 @@
             };
 
             // Helper function to apply selection with add/subtract modes
-            function applySelection(lassoMode = 'dominant') {
+            function applySelection(lassoMode = 'all') {
                 // Point-in-polygon test
                 function isPointInPolygon(x, y, poly) {
                     let inside = false;
@@ -1068,35 +1067,6 @@
                 }
 
                 const data = originalImageData.data;
-                let dr, dg, db, tol = 30;
-                
-                if (lassoMode === 'dominant') {
-                    // Dominant color mode: find dominant color within lasso region
-                    const colorCounts = new Map();
-                    
-                    for (let y = 0; y < canvas.height; y++) {
-                        for (let x = 0; x < canvas.width; x++) {
-                            if (isPointInPolygon(x, y, lassoPath)) {
-                                const idx = (y * canvas.width + x) * 4;
-                                const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-                                const colorKey = `${r},${g},${b}`;
-                                colorCounts.set(colorKey, (colorCounts.get(colorKey) || 0) + 1);
-                            }
-                        }
-                    }
-                    
-                    let dominantColor = null;
-                    let maxCount = 0;
-                    for (const [color, count] of colorCounts.entries()) {
-                        if (count > maxCount) {
-                            maxCount = count;
-                            dominantColor = color;
-                        }
-                    }
-                    
-                    if (!dominantColor) return;
-                    [dr, dg, db] = dominantColor.split(',').map(Number);
-                }
                 
                 // Apply selection
                 for (let y = 0; y < canvas.height; y++) {
@@ -1106,9 +1076,7 @@
                             const r = data[idx], g = data[idx + 1], b = data[idx + 2];
                             
                             let shouldSelect = false;
-                            if (lassoMode === 'dominant') {
-                                shouldSelect = Math.abs(r - dr) < tol && Math.abs(g - dg) < tol && Math.abs(b - db) < tol;
-                            } else if (lassoMode === 'all') {
+                            if (lassoMode === 'all') {
                                 shouldSelect = true;
                             } else if (lassoMode === 'white') {
                                 // White: high brightness (r, g, b all > 200)
@@ -1185,7 +1153,7 @@
                 if (isDrawingLasso && lassoPath.length > 2) {
                     isDrawingLasso = false;
                     saveSelectionState();
-                    const lassoMode = document.getElementById('lassoMode') ? document.getElementById('lassoMode').value : 'dominant';
+                    const lassoMode = document.getElementById('lassoMode') ? document.getElementById('lassoMode').value : 'all';
                     applySelection(lassoMode);
                 }
                 isDrawingLasso = false;

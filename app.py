@@ -60,6 +60,7 @@ def generate_stl():
     num_layers = int(data['num_layers'])
     heights = data.get('heights') or []
     positions = data.get('positions') or []
+    dilation = int(data.get('dilation') or 2)
     # Normalize heights to floats with a sane default
     height_values = []
     for i in range(num_layers):
@@ -177,7 +178,7 @@ def generate_stl_from_points(points, width, height, z_offset, thickness):
                     out.add((x, y))
         return out
 
-    grown_points = dilate_points(filtered_points, radius=2)
+    grown_points = dilate_points(filtered_points, radius=dilation)
 
     # Downsample into blocks: mark block occupied if any pixel inside
     blocks = set()

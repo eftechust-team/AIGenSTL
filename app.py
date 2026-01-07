@@ -130,111 +130,112 @@ def generate_stl():
 
 def generate_stl_from_points(points, width, height, z_offset, thickness):
     """Generate STL file from 2D black points by extruding them into 3D.
-    x/y positions stay consistent with source image; layers are stacked by provided heights.
+    Creates a manifold mesh by only generating exterior faces.
     """
     scale = 0.1  # mm per pixel
 
     solid_name = "layer"
     stl = f"solid {solid_name}\n"
-    step = 1  # voxel sampling for finer edges (1 = pixel-level detail)
     
     # Filter out isolated pixels to smooth edges
     point_set = set(points)
     filtered_points = set()
     for x, y in points:
-        # Keep pixel if it has at least 1 neighbor
         has_neighbor = False
         for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
             if (x+dx, y+dy) in point_set:
                 has_neighbor = True
                 break
-        if has_neighbor or len(points) < 100:  # Keep all if very small shape
+        if has_neighbor or len(points) < 100:
             filtered_points.add((x, y))
     
-    voxels = set((x // step, y // step) for x, y in filtered_points)
+    # Build voxel set
+    voxels = set(filtered_points)
     
-    for vox_x, vox_y in voxels:
-        x = vox_x * step
-        y = vox_y * step
-        
+    # Generate only exterior faces (manifold mesh)
+    # For each voxel, check if each face is exposed (neighbor doesn't exist)
+    for x, y in voxels:
         x3d = x * scale
-        y3d = (height - y) * scale  # Flip Y axis to prevent mirroring
+        y3d = (height - y) * scale
         z_bottom = z_offset
         z_top = z_offset + thickness
-        size = step * scale
+        size = scale
         
-        # Create a cube for this voxel (12 triangles, 6 faces)
-        # Bottom face (z = z_bottom)
-        stl += create_triangle(
-            [x3d, y3d, z_bottom],
-            [x3d + size, y3d, z_bottom],
-            [x3d + size, y3d + size, z_bottom]
-        )
+        # Bottom face (z = z_bottom) - always visible
         stl += create_triangle(
             [x3d, y3d, z_bottom],
             [x3d + size, y3d + size, z_bottom],
-            [x3d, y3d + size, z_bottom]
-        )
-        
-        # Top face (z = z_top)
-        stl += create_triangle(
-            [x3d, y3d, z_top],
-            [x3d + size, y3d + size, z_top],
-            [x3d + size, y3d, z_top]
-        )
-        stl += create_triangle(
-            [x3d, y3d, z_top],
-            [x3d, y3d + size, z_top],
-            [x3d + size, y3d + size, z_top]
-        )
-        
-        # Front face
-        stl += create_triangle(
-            [x3d, y3d, z_bottom],
-            [x3d + size, y3d, z_bottom],
-            [x3d + size, y3d, z_top]
+            [x3d + size, y3d, z_bottom]
         )
         stl += create_triangle(
             [x3d, y3d, z_bottom],
-            [x3d + size, y3d, z_top],
-            [x3d, y3d, z_top]
-        )
-        
-        # Back face
-        stl += create_triangle(
             [x3d, y3d + size, z_bottom],
-            [x3d + size, y3d + size, z_top],
             [x3d + size, y3d + size, z_bottom]
         )
+        
+        # Top face (z = z_top) - always visible
         stl += create_triangle(
-            [x3d, y3d + size, z_bottom],
-            [x3d, y3d + size, z_top],
+            [x3d, y3d, z_top],
+            [x3d + size, y3d, z_top],
             [x3d + size, y3d + size, z_top]
         )
-        
-        # Left face
         stl += create_triangle(
-            [x3d, y3d, z_bottom],
             [x3d, y3d, z_top],
+            [x3d + size, y3d + size, z_top],
             [x3d, y3d + size, z_top]
         )
-        stl += create_triangle(
-            [x3d, y3d, z_bottom],
-            [x3d, y3d + size, z_top],
-            [x3d, y3d + size, z_bottom]
-        )
         
-        # Right face
-        stl += create_triangle(
-            [x3d + size, y3d, z_bottom],
-            [x3d + size, y3d + size, z_top],
-            [x3d + size, y3d, z_top]
-        )
-        stl += create_triangle(
-            [x3d + size, y3d, z_bottom],
-            [x3d + size, y3d + size, z_bottom],
-            [x3d + size, y3d + size, z_top]
-        )
+        # Front face (y-): only if no neighbor at (x, y-1)
+        if (x, y - 1) not in voxels:
+            stl += create_triangle(
+                [x3d, y3d, z_bottom],
+                [x3d + size, y3d, z_top],
+                [x3d + size, y3d, z_bottom]
+            )
+            stl += create_triangle(
+                [x3d, y3d, z_bottom],
+                [x3d, y3d, z_top],
+                [x3d + size, y3d, z_top]
+            )
+        
+        # Back face (y+): only if no neighbor at (x, y+1)
+        if (x, y + 1) not in voxels:
+            stl += create_triangle(
+                [x3d, y3d + size, z_bottom],
+                [x3d + size, y3d + size, z_bottom],
+                [x3d + size, y3d + size, z_top]
+            )
+            stl += create_triangle(
+                [x3d, y3d + size, z_bottom],
+                [x3d + size, y3d + size, z_top],
+                [x3d, y3d + size, z_top]
+            )
+        
+        # Left face (x-): only if no neighbor at (x-1, y)
+        if (x - 1, y) not in voxels:
+            stl += create_triangle(
+                [x3d, y3d, z_bottom],
+                [x3d, y3d + size, z_top],
+                [x3d, y3d, z_top]
+            )
+            stl += create_triangle(
+                [x3d, y3d, z_bottom],
+                [x3d, y3d + size, z_bottom],
+                [x3d, y3d + size, z_top]
+            )
+        
+        # Right face (x+): only if no neighbor at (x+1, y)
+        if (x + 1, y) not in voxels:
+            stl += create_triangle(
+                [x3d + size, y3d, z_bottom],
+                [x3d + size, y3d, z_top],
+                [x3d + size, y3d + size, z_top]
+            )
+            stl += create_triangle(
+                [x3d + size, y3d, z_bottom],
+                [x3d + size, y3d + size, z_top],
+                [x3d + size, y3d + size, z_bottom]
+            )
     
     stl += f"endsolid {solid_name}\n"
     return stl

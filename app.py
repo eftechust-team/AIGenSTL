@@ -136,9 +136,22 @@ def generate_stl_from_points(points, width, height, z_offset, thickness):
 
     solid_name = "layer"
     stl = f"solid {solid_name}\n"
-    step = 2  # voxel sampling to reduce file size
+    step = 1  # voxel sampling for finer edges (1 = pixel-level detail)
     
-    voxels = set((x // step, y // step) for x, y in points)
+    # Filter out isolated pixels to smooth edges
+    point_set = set(points)
+    filtered_points = set()
+    for x, y in points:
+        # Keep pixel if it has at least 1 neighbor
+        has_neighbor = False
+        for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
+            if (x+dx, y+dy) in point_set:
+                has_neighbor = True
+                break
+        if has_neighbor or len(points) < 100:  # Keep all if very small shape
+            filtered_points.add((x, y))
+    
+    voxels = set((x // step, y // step) for x, y in filtered_points)
     
     for vox_x, vox_y in voxels:
         x = vox_x * step

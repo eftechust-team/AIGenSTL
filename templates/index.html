@@ -450,13 +450,16 @@
                                         <option value="white">White Area Only</option>
                                     </select>
                                 </label>
-                                <label style="width: 100%; display:flex; flex-direction:column; gap:6px; margin-top:8px;">
-                                    Expand Selection (px):
-                                    <input type="number" id="dilationPx" min="0" max="10" value="3" style="width:100%; box-sizing:border-box;" />
+                            </div>
+                            <!-- Dilation control: its own small block under selection tools, aligned left -->
+                            <div class="controls" style="margin:6px 0 8px 0; padding:8px; gap:8px; display:flex; align-items:center; width:fit-content;">
+                                <label style="display:flex; align-items:center; gap:8px; font-weight:500;">
+                                    Expand Selection (px)
+                                    <input type="number" id="dilationPx" min="0" max="10" value="3" style="width:72px; padding:4px 6px; border:2px solid #ddd; border-radius:6px;" />
                                 </label>
                             </div>
                         </div>
-                        <div class="controls" style="margin:0 0 6px 0; padding:12px; gap:15px; display:flex; flex-wrap:wrap;">
+                        <div class="controls" style="margin:0 0 6px 0; padding:12px; gap:15px; display:flex; flex-wrap:wrap; align-items:center;">
                             <label>
                                 <input type="radio" name="editMode" value="add" checked> ➕ Add Mode
                             </label>
@@ -993,26 +996,26 @@
             let selectionMask = new Uint8Array(canvas.width * canvas.height); // 1 = selected, 0 = not selected
             let undoStackSelection = [];
             let redoStackSelection = [];
-            // Expand selection helper (morphological dilation)
-            function expandMask(radius = 2) {
+            // Dilation helper that operates on a provided binary mask
+            function dilateBinary(srcMask, radius = 2) {
                 const w = canvas.width, h = canvas.height;
-                const expanded = new Uint8Array(w * h);
+                const out = new Uint8Array(w * h);
                 for (let y = 0; y < h; y++) {
                     for (let x = 0; x < w; x++) {
-                        if (selectionMask[y * w + x] === 1) {
+                        if (srcMask[y * w + x] === 1) {
                             for (let dy = -radius; dy <= radius; dy++) {
                                 for (let dx = -radius; dx <= radius; dx++) {
                                     if (dx * dx + dy * dy > radius * radius) continue;
                                     const nx = x + dx, ny = y + dy;
                                     if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
-                                        expanded[ny * w + nx] = 1;
+                                        out[ny * w + nx] = 1;
                                     }
                                 }
                             }
                         }
                     }
                 }
-                selectionMask = expanded;
+                return out;
             }
             
             // Initialize from existing selection if any
@@ -1074,9 +1077,7 @@
                 const y = Math.floor((e.clientY - rect.top) * (canvas.height / rect.height));
                 lassoPath.push([x, y]);
                 
-                // Show real-time preview with current selection mask
-                // Slightly expand selection to avoid tiny gaps
-                expandMask(selectionDilationPx);
+                // Show real-time preview with current selection mask (no cumulative dilation)
                 redrawWithSelection();
                 
                 // Draw lasso path
@@ -1105,12 +1106,15 @@
                 }
 
                 const data = originalImageData.data;
+                const w = canvas.width, h = canvas.height;
+                // Build local mask for current lasso operation
+                const localMask = new Uint8Array(w * h);
                 
                 // Apply selection
-                for (let y = 0; y < canvas.height; y++) {
-                    for (let x = 0; x < canvas.width; x++) {
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
                         if (isPointInPolygon(x, y, lassoPath)) {
-                            const idx = (y * canvas.width + x) * 4;
+                            const idx = (y * w + x) * 4;
                             const r = data[idx], g = data[idx + 1], b = data[idx + 2];
                             
                             let shouldSelect = false;
@@ -1125,19 +1129,24 @@
                             }
                             
                             if (shouldSelect) {
-                                const maskIdx = y * canvas.width + x;
-                                if (editMode === 'add') {
-                                    selectionMask[maskIdx] = 1;
-                                } else {
-                                    selectionMask[maskIdx] = 0;
-                                }
+                                const maskIdx = y * w + x;
+                                localMask[maskIdx] = 1;
                             }
                         }
                     }
                 }
                 
-                // Slightly expand selection to avoid tiny gaps
-                expandMask(selectionDilationPx);
+                // Dilate only the local selection, then merge
+                const dilatedLocal = dilateBinary(localMask, selectionDilationPx);
+                if (editMode === 'add') {
+                    for (let i = 0; i < selectionMask.length; i++) {
+                        if (dilatedLocal[i] === 1) selectionMask[i] = 1;
+                    }
+                } else {
+                    for (let i = 0; i < selectionMask.length; i++) {
+                        if (dilatedLocal[i] === 1) selectionMask[i] = 0;
+                    }
+                }
                 redrawWithSelection();
                 
                 // Draw selection outline
@@ -1164,27 +1173,36 @@
 
                 const visited = new Set();
                 const stack = [[startX, startY]];
+                const w = canvas.width, h = canvas.height;
+                const localMask = new Uint8Array(w * h);
 
                 while (stack.length) {
                     const [x, y] = stack.pop();
                     const key = `${x},${y}`;
-                    if (visited.has(key) || x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
+                    if (visited.has(key) || x < 0 || x >= w || y < 0 || y >= h) continue;
                     visited.add(key);
 
-                    const idx = (y * canvas.width + x) * 4;
+                    const idx = (y * w + x) * 4;
                     const r = data[idx], g = data[idx + 1], b = data[idx + 2];
                     if (!inside(r, g, b)) continue;
 
-                    const maskIdx = y * canvas.width + x;
-                    if (editMode === 'add') {
-                        selectionMask[maskIdx] = 1;
-                    } else {
-                        selectionMask[maskIdx] = 0;
-                    }
+                    const maskIdx = y * w + x;
+                    localMask[maskIdx] = 1;
 
                     stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
                 }
 
+                // Dilate only the local selection, then merge
+                const dilatedLocal = dilateBinary(localMask, selectionDilationPx);
+                if (editMode === 'add') {
+                    for (let i = 0; i < selectionMask.length; i++) {
+                        if (dilatedLocal[i] === 1) selectionMask[i] = 1;
+                    }
+                } else {
+                    for (let i = 0; i < selectionMask.length; i++) {
+                        if (dilatedLocal[i] === 1) selectionMask[i] = 0;
+                    }
+                }
                 redrawWithSelection();
             }
 

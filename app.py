@@ -13,7 +13,7 @@ app = Flask(__name__, static_folder='static', static_url_path='/static')
 # The AK/SK provided are for account access, not direct API calls
 # After logging in with your AK/SK, generate an API Key in the Ark console
 DOUBAO_API_URL = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
-API_KEY = "f29983c8-351d-427f-8f2b-f89311b372da"
+API_KEY = os.getenv("DOUBAO_API_KEY", "")
 
 @app.route('/')
 def index():
@@ -25,6 +25,10 @@ def generate_images():
     user_prompt = data['prompt']
     prompt = f"生成一个白色背景黑色填充的简笔画风格图像，做成{user_prompt}的形状"
     
+    # Ensure API key is set via environment variable
+    if not API_KEY:
+        return jsonify({'error': 'Missing API key. Set environment variable DOUBAO_API_KEY in Render.'})
+
     # Call Doubao API to generate image
     response = requests.post(DOUBAO_API_URL, json={
         'model': 'doubao-seedream-4-0-250828',
@@ -108,7 +112,7 @@ def generate_stl():
             # Generate STL for this layer; z_offset from previous layer heights
             z_offset = z_offsets[layer_idx]
             thickness = height_values[layer_idx]
-            stl_content = generate_stl_from_points(black_points, width, height, z_offset, thickness)
+            stl_content = generate_stl_from_points(black_points, width, height, z_offset, thickness, dilation)
             
             stl_files.append({
                 'name': f'layer_{layer_idx + 1}.stl',
@@ -129,7 +133,7 @@ def generate_stl():
     except Exception as e:
         return jsonify({'error': str(e)})
 
-def generate_stl_from_points(points, width, height, z_offset, thickness):
+def generate_stl_from_points(points, width, height, z_offset, thickness, dilation):
     """Generate STL from 2D points as a manifold mesh with reduced triangles.
     - Removes isolated pixels
     - Downsamples to 2px blocks to cut triangle count

@@ -1,24 +1,48 @@
-# Multi-Layer STL Generator
+# AI Image to STL Generator
 
-A web application for generating multi-layer STL files using AI image generation.
+Generate multi-layer STL files from AI-generated black-and-white images with lasso/wand selection and adjustable edge dilation.
 
 ## Features
 
-- Input text description to generate black-and-white images using Volcano Engine Doubao AI.
-- Select one of four generated images.
-- Edit the selected image with a black and white pen.
-- Specify the number of layers.
-- Select shapes for each layer using a magic wand tool (placeholder).
-- Generate the corresponding STL file.
+- AI image generation via Doubao API.
+- Canvas editing (pen, bucket, undo/redo).
+- Selection tools: Magic Wand and Lasso with add/subtract.
+- Expand Selection (px) to close gaps without cumulative growth.
+- Per-layer height and stacking options; STL export as a ZIP.
 
-## Setup
+## Local Run
 
-1. Install Python dependencies: `pip install -r requirements.txt`
-2. Replace the API placeholders in `app.py` with actual Volcano Engine Doubao API details.
-3. Run the app: `python app.py`
-4. Open http://localhost:5000 in your browser.
+1. Install dependencies:
+	```bash
+	pip install -r requirements.txt
+	```
+2. Set the environment variable for the Doubao API key (optional locally):
+	```bash
+	$env:DOUBAO_API_KEY="<your-key>"   # PowerShell
+	```
+3. Start the app:
+	```bash
+	python app.py
+	```
+4. Open http://localhost:8080
 
-## Note
+## Deploy on Render
 
-- The magic wand tool and STL generation are placeholders and need further implementation.
-- Provide the API key and URL for the AI service.
+This repo includes `render.yaml` for one-click deploy.
+
+- Build: `pip install -r requirements.txt`
+- Start: `gunicorn app:app`
+- Environment variables:
+  - `DOUBAO_API_KEY`: your Doubao API key (set in Render Dashboard → Environment)
+  - `PYTHON_VERSION`: 3.11 (provided in render.yaml)
+
+Steps:
+- Create a new Web Service from this repo.
+- Render will detect `render.yaml` and configure the service.
+- Set `DOUBAO_API_KEY` in the service’s Environment tab (as a Secret).
+- Deploy. Auto-deploy is enabled.
+
+## Notes
+
+- The Doubao API key must be provided via `DOUBAO_API_KEY`. If missing, image generation returns a clear error.
+- Logo at `/static/logo.jpeg` is optional and can be added later.

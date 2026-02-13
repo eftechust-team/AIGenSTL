@@ -16,7 +16,7 @@ app = Flask(__name__, static_folder='static', static_url_path='/static')
 # The AK/SK provided are for account access, not direct API calls
 # After logging in with your AK/SK, generate an API Key in the Ark console
 DOUBAO_API_URL = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
-API_KEY = os.getenv("DOUBAO_API_KEY", "")
+API_KEY = os.getenv("DOUBAO_API_KEY", "f29983c8-351d-427f-8f2b-f89311b372da")
 
 @app.route('/')
 def index():

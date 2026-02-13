@@ -365,7 +365,29 @@
         
         <!-- Image Selection Section -->
         <div class="section" id="selectionSection" style="display: none;">
-            <h2>Step 2: Select & Edit Image</h2>
+            <h2>Step 2: Choose Generation Mode</h2>
+            
+            <!-- Mode Selection -->
+            <div id="modeSelection" style="display: none;">
+                <div class="info-box" style="background: #e3f2fd; border-left-color: #2196f3;">
+                    <p style="margin: 0 0 15px 0; font-weight: 600; color: #1976d2;">Select how you want to generate your 3D model:</p>
+                </div>
+                
+                <div style="display: flex; gap: 20px; margin: 20px 0;">
+                    <button id="fastGenerateBtn" style="flex: 1; padding: 20px; background: #27ae60; font-size: 16px; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+                        <span style="font-size: 24px;">⚡</span>
+                        <span style="font-weight: 700;">Fast Generate</span>
+                        <span style="font-size: 12px; font-weight: 400; opacity: 0.9;">Automatically extract and fill shape</span>
+                    </button>
+                    
+                    <button id="manualEditBtn" style="flex: 1; padding: 20px; background: #667eea; font-size: 16px; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+                        <span style="font-size: 24px;">✏️</span>
+                        <span style="font-weight: 700;">Manual Edit & Multi-Layer</span>
+                        <span style="font-size: 12px; font-weight: 400; opacity: 0.9;">Edit details and create multiple layers</span>
+                    </button>
+                </div>
+            </div>
+            
             <button id="select" style="display: none;">Edit Selected Image</button>
             
             <!-- Drawing Canvas -->
@@ -406,7 +428,7 @@
                         </label>
                         <label style="display: flex; flex-direction: column; gap: 5px; width: 100%;">
                             Total Model Length (mm):
-                            <input type="number" id="totalLength" min="1" max="100" value="10" step="0.1" style="width: 100%; box-sizing: border-box;">
+                            <input type="number" id="totalLength" min="1" max="100" value="50" step="0.1" style="width: 100%; box-sizing: border-box;">
                         </label>
                         <button id="setLayers" style="width: 100%; box-sizing: border-box;">Configure Layers</button>
                     </div>
@@ -455,7 +477,7 @@
                             <div class="controls" style="margin:6px 0 8px 0; padding:8px; gap:8px; display:flex; align-items:center; width:fit-content;">
                                 <label style="display:flex; align-items:center; gap:8px; font-weight:500;">
                                     Expand Selection (px)
-                                    <input type="number" id="dilationPx" min="0" max="10" value="3" style="width:72px; padding:4px 6px; border:2px solid #ddd; border-radius:6px;" />
+                                    <input type="number" id="dilationPx" min="0" max="10" value="1" style="width:72px; padding:4px 6px; border:2px solid #ddd; border-radius:6px;" />
                                 </label>
                             </div>
                         </div>
@@ -473,8 +495,9 @@
                         <div class="controls" style="background: white; border: none; padding: 0;">
                             <button id="undoSelection" style="display: none;">↶ Undo</button>
                             <button id="redoSelection" style="display: none;">↷ Redo</button>
+                            <button id="reverseSelection" style="display: none;">🔄 Reverse</button>
                             <button id="clearSelection" style="display: none;">Clear Selection</button>
-                            <button id="confirmSelection" style="display: none;">Confirm Selection</button>
+                            <button id="confirmSelection" style="display: none; background: #27ae60;">Confirm Selection</button>
                         </div>
                     </div>
                 </div>
@@ -498,7 +521,7 @@
                         </label>
                         <label style="display: flex; flex-direction: column; gap: 5px; width: 100%;">
                             Total Model Length (mm):
-                            <input type="number" id="totalLength" min="1" max="100" value="10" step="0.1" style="width: 100%; box-sizing: border-box;">
+                            <input type="number" id="totalLength" min="1" max="100" value="50" step="0.1" style="width: 100%; box-sizing: border-box;">
                         </label>
                         <button id="setLayers" style="width: 100%; box-sizing: border-box;">Configure Layers</button>
                     </div>
@@ -508,7 +531,41 @@
         
         <!-- STL Generation Section -->
         <div class="section">
+            <div id="aaControlsPanel" class="controls" style="margin:0 0 12px 0; padding:10px; gap:12px; display:none; flex-wrap:wrap; align-items:center; border:1px solid #eee; border-radius:10px;">
+                <label style="display:flex; align-items:center; gap:8px;">
+                    Anti-Aliasing
+                    <input type="checkbox" id="antiAliasing" checked />
+                </label>
+                <label style="display:flex; align-items:center; gap:8px;">
+                    Edge Threshold
+                    <input type="number" id="edgeThreshold" min="0" max="255" value="50" style="width:80px; padding:4px 6px; border:2px solid #ddd; border-radius:6px;" />
+                </label>
+                <label style="display:flex; align-items:center; gap:8px;">
+                    Quality
+                    <select id="aaUpsample" style="padding:4px 6px; border:2px solid #ddd; border-radius:6px;">
+                        <option value="3">Fast</option>
+                        <option value="4" selected>Balanced</option>
+                        <option value="6">High</option>
+                    </select>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px;">
+                    AA Strength
+                    <input type="number" id="aaSigma" min="0" max="1.5" step="0.05" value="0.35" style="width:80px; padding:4px 6px; border:2px solid #ddd; border-radius:6px;" />
+                </label>
+            </div>
             <button id="generateSTL" style="display: none;">Generate STL Files</button>
+            <div id="loadingSpinner" style="display: none; text-align: center; margin-top: 20px;">
+                <div style="display: inline-block;">
+                    <div style="width: 50px; height: 50px; border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 15px;"></div>
+                    <p style="font-size: 16px; color: #667eea; font-weight: 500;">Generating STL files...</p>
+                </div>
+            </div>
+            <style>
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
         </div>
     </div>
 
@@ -584,7 +641,79 @@
             if (imgElement) {
                 imgElement.classList.add('selected');
             }
+            // Show mode selection instead of direct edit
+            document.getElementById('modeSelection').style.display = 'block';
+            document.getElementById('select').style.display = 'none';
+        }
+        
+        // Mode Selection Handlers
+        document.getElementById('fastGenerateBtn').addEventListener('click', async () => {
+            // Directly generate with default settings: 60mm length, 2mm height
+            const status = document.getElementById('status');
+            const btn = document.getElementById('fastGenerateBtn');
+            
+            // Show loading state
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span style="font-size: 24px;">⏳</span><span style="font-weight: 700;">Generating STL...</span><span style="font-size: 12px; font-weight: 400; opacity: 0.9;">Please wait</span>';
+            btn.disabled = true;
+            btn.style.opacity = '0.7';
+            status.textContent = '⚙️ Fast generating STL... Please wait.';
+            
+            try {
+                const response = await fetch('/fast_generate_stl', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        image: selectedImage,
+                        height: 2.0  // Fixed 2mm height
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    status.textContent = 'Error generating STL';
+                } else {
+                    status.textContent = '✅ STL generated successfully!';
+                    const blob = base64ToBlob(data.stl_file, 'application/octet-stream');
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'model.stl';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                status.textContent = 'Error generating STL';
+                alert('Error: ' + error.message);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                btn.style.opacity = '1';
+            }
+        });
+        
+        document.getElementById('manualEditBtn').addEventListener('click', () => {
+            document.getElementById('modeSelection').style.display = 'none';
             document.getElementById('select').style.display = 'block';
+            document.getElementById('select').click();
+        });
+        
+        function base64ToBlob(base64, contentType) {
+            const byteCharacters = atob(base64);
+            const byteArrays = [];
+            for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+                const slice = byteCharacters.slice(offset, offset + 512);
+                const byteNumbers = new Array(slice.length);
+                for (let i = 0; i < slice.length; i++) {
+                    byteNumbers[i] = slice.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                byteArrays.push(byteArray);
+            }
+            return new Blob(byteArrays, { type: contentType });
         }
 
         // Edit Selected Image
@@ -981,6 +1110,7 @@
                 }
                 document.getElementById('undoSelection').style.display = 'block';
                 document.getElementById('redoSelection').style.display = 'block';
+                document.getElementById('reverseSelection').style.display = 'block';
                 document.getElementById('confirmSelection').style.display = 'inline-block';
                 document.getElementById('clearSelection').style.display = 'inline-block';
                 
@@ -996,24 +1126,241 @@
             let selectionMask = new Uint8Array(canvas.width * canvas.height); // 1 = selected, 0 = not selected
             let undoStackSelection = [];
             let redoStackSelection = [];
-            // Dilation helper that operates on a provided binary mask
-            function dilateBinary(srcMask, radius = 2) {
-                const w = canvas.width, h = canvas.height;
-                const out = new Uint8Array(w * h);
-                for (let y = 0; y < h; y++) {
-                    for (let x = 0; x < w; x++) {
-                        if (srcMask[y * w + x] === 1) {
-                            for (let dy = -radius; dy <= radius; dy++) {
-                                for (let dx = -radius; dx <= radius; dx++) {
-                                    if (dx * dx + dy * dy > radius * radius) continue;
-                                    const nx = x + dx, ny = y + dy;
-                                    if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
-                                        out[ny * w + nx] = 1;
-                                    }
-                                }
+            
+            // Smooth selection mask: apply median filter then close/open to remove jagged edges
+            function smoothSelectionMask(mask, width, height, iterations = 1) {
+                // Use supersampling and heavy blur for ultra-smooth edges
+                const scale = 8; // High supersampling for smooth curves
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width * scale;
+                tempCanvas.height = height * scale;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                // Draw at high resolution
+                const tempImg = tempCtx.createImageData(tempCanvas.width, tempCanvas.height);
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        if (mask[y * width + x] !== 1) continue;
+                        const baseX = x * scale;
+                        const baseY = y * scale;
+                        for (let dy = 0; dy < scale; dy++) {
+                            const row = (baseY + dy) * tempCanvas.width;
+                            for (let dx = 0; dx < scale; dx++) {
+                                const idx = (row + baseX + dx) * 4;
+                                tempImg.data[idx] = 255;
+                                tempImg.data[idx + 1] = 255;
+                                tempImg.data[idx + 2] = 255;
+                                tempImg.data[idx + 3] = 255;
                             }
                         }
                     }
+                }
+                tempCtx.putImageData(tempImg, 0, 0);
+                
+                // Apply strong Gaussian blur to create smooth edges
+                tempCtx.filter = 'blur(3px)';
+                tempCtx.drawImage(tempCanvas, 0, 0);
+                tempCtx.filter = 'none';
+                
+                // Downsample with high-quality smoothing
+                const outCanvas = document.createElement('canvas');
+                outCanvas.width = width;
+                outCanvas.height = height;
+                const outCtx = outCanvas.getContext('2d');
+                outCtx.imageSmoothingEnabled = true;
+                outCtx.imageSmoothingQuality = 'high';
+                outCtx.drawImage(tempCanvas, 0, 0, width, height);
+                
+                // Read back and threshold with more tolerance for smooth edges
+                const outData = outCtx.getImageData(0, 0, width, height);
+                const result = new Uint8Array(width * height);
+                for (let i = 0; i < result.length; i++) {
+                    result[i] = outData.data[i * 4] > 128 ? 1 : 0;
+                }
+                
+                return result;
+            }
+
+            // Simplify a polyline using Ramer–Douglas–Peucker to reduce jaggy points
+            function simplifyPath(points, epsilon = 1.5) {
+                if (!points || points.length < 3) return points || [];
+
+                const sqr = (v) => v * v;
+                const distToSegmentSq = (p, a, b) => {
+                    const dx = b[0] - a[0];
+                    const dy = b[1] - a[1];
+                    if (dx === 0 && dy === 0) return sqr(p[0] - a[0]) + sqr(p[1] - a[1]);
+                    const t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy);
+                    if (t < 0) return sqr(p[0] - a[0]) + sqr(p[1] - a[1]);
+                    if (t > 1) return sqr(p[0] - b[0]) + sqr(p[1] - b[1]);
+                    const px = a[0] + t * dx;
+                    const py = a[1] + t * dy;
+                    return sqr(p[0] - px) + sqr(p[1] - py);
+                };
+
+                const rdp = (pts, eps) => {
+                    let maxDist = 0;
+                    let index = 0;
+                    const end = pts.length - 1;
+                    for (let i = 1; i < end; i++) {
+                        const d = distToSegmentSq(pts[i], pts[0], pts[end]);
+                        if (d > maxDist) {
+                            index = i;
+                            maxDist = d;
+                        }
+                    }
+                    if (maxDist > eps * eps) {
+                        const left = rdp(pts.slice(0, index + 1), eps);
+                        const right = rdp(pts.slice(index), eps);
+                        return left.slice(0, -1).concat(right);
+                    }
+                    return [pts[0], pts[end]];
+                };
+
+                return rdp(points, epsilon);
+            }
+
+            // Rasterize lasso to a mask using supersampling to reduce jagged edges
+            function rasterizeLassoMask(path, width, height, scale = 2) {
+                if (!path || path.length < 3) return new Uint8Array(width * height);
+                const s = Math.max(1, Math.floor(scale));
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = width * s;
+                offCanvas.height = height * s;
+                const offCtx = offCanvas.getContext('2d');
+                offCtx.clearRect(0, 0, offCanvas.width, offCanvas.height);
+                offCtx.fillStyle = '#000';
+                offCtx.beginPath();
+                offCtx.moveTo(path[0][0] * s, path[0][1] * s);
+                for (let i = 1; i < path.length; i++) {
+                    offCtx.lineTo(path[i][0] * s, path[i][1] * s);
+                }
+                offCtx.closePath();
+                offCtx.fill();
+
+                const img = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height).data;
+                const out = new Uint8Array(width * height);
+                const threshold = Math.max(1, Math.floor(s * s * 0.35));
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        let count = 0;
+                        const baseY = y * s;
+                        const baseX = x * s;
+                        for (let dy = 0; dy < s; dy++) {
+                            const row = (baseY + dy) * offCanvas.width;
+                            for (let dx = 0; dx < s; dx++) {
+                                const idx = ((row + baseX + dx) * 4) + 3;
+                                if (img[idx] > 0) count++;
+                            }
+                        }
+                        if (count >= threshold) out[y * width + x] = 1;
+                    }
+                }
+                return out;
+            }
+
+            // Light smoothing on a mask to prevent tiny jaggies before merge
+            function smoothMaskLight(mask, width, height, iterations = 1) {
+                return smoothSelectionMask(mask, width, height, iterations);
+            }
+
+            // Render selection mask with supersampling + smoothing to reduce jagged pixels
+            function renderSmoothedSelection(mask, width, height, scale = 8, blur = 3.0) {
+                const s = Math.max(1, Math.floor(scale));
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = width * s;
+                offCanvas.height = height * s;
+                const offCtx = offCanvas.getContext('2d');
+                offCtx.clearRect(0, 0, offCanvas.width, offCanvas.height);
+
+                // Draw mask at high resolution
+                const img = offCtx.createImageData(offCanvas.width, offCanvas.height);
+                const data = img.data;
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        if (mask[y * width + x] !== 1) continue;
+                        const baseX = x * s;
+                        const baseY = y * s;
+                        for (let dy = 0; dy < s; dy++) {
+                            const row = (baseY + dy) * offCanvas.width;
+                            for (let dx = 0; dx < s; dx++) {
+                                const idx = (row + baseX + dx) * 4;
+                                data[idx] = 0;
+                                data[idx + 1] = 0;
+                                data[idx + 2] = 0;
+                                data[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+                offCtx.putImageData(img, 0, 0);
+
+                // Apply strong blur to smooth edges before downsampling
+                if (blur && blur > 0) {
+                    offCtx.filter = `blur(${blur}px)`;
+                    offCtx.drawImage(offCanvas, 0, 0);
+                    offCtx.filter = 'none';
+                }
+
+                // Downsample with smoothing
+                const outCanvas = document.createElement('canvas');
+                outCanvas.width = width;
+                outCanvas.height = height;
+                const outCtx = outCanvas.getContext('2d');
+                outCtx.imageSmoothingEnabled = true;
+                outCtx.imageSmoothingQuality = 'high';
+                outCtx.drawImage(offCanvas, 0, 0, outCanvas.width, outCanvas.height);
+
+                // Threshold to clean binary mask
+                const outImg = outCtx.getImageData(0, 0, width, height);
+                const outData = outImg.data;
+                for (let i = 0; i < outData.length; i += 4) {
+                    const alpha = outData[i + 3];
+                    if (alpha > 90) {
+                        outData[i] = 0; outData[i + 1] = 0; outData[i + 2] = 0; outData[i + 3] = 255;
+                    } else {
+                        outData[i] = 255; outData[i + 1] = 255; outData[i + 2] = 255; outData[i + 3] = 255;
+                    }
+                }
+                outCtx.putImageData(outImg, 0, 0);
+
+                return outCtx.getImageData(0, 0, width, height);
+            }
+            
+            // Smooth expand helper to avoid jagged edges
+            function expandMaskSmooth(srcMask, radius = 2) {
+                const w = canvas.width, h = canvas.height;
+                if (!radius || radius <= 0) return srcMask;
+
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = w;
+                offCanvas.height = h;
+                const offCtx = offCanvas.getContext('2d');
+                const img = offCtx.createImageData(w, h);
+                const data = img.data;
+
+                for (let i = 0; i < srcMask.length; i++) {
+                    if (srcMask[i] === 1) {
+                        const idx = i * 4;
+                        data[idx] = 0;
+                        data[idx + 1] = 0;
+                        data[idx + 2] = 0;
+                        data[idx + 3] = 255;
+                    }
+                }
+
+                offCtx.putImageData(img, 0, 0);
+                offCtx.filter = `blur(${radius}px)`;
+                offCtx.globalCompositeOperation = 'source-over';
+                offCtx.drawImage(offCanvas, 0, 0);
+                offCtx.filter = 'none';
+
+                const blurred = offCtx.getImageData(0, 0, w, h).data;
+                const out = new Uint8Array(w * h);
+                // Threshold alpha to get smooth expanded mask
+                const threshold = 20;
+                for (let i = 0; i < out.length; i++) {
+                    if (blurred[i * 4 + 3] > threshold) out[i] = 1;
                 }
                 return out;
             }
@@ -1093,51 +1440,39 @@
 
             // Helper function to apply selection with add/subtract modes
             function applySelection(lassoMode = 'all') {
-                // Point-in-polygon test
-                function isPointInPolygon(x, y, poly) {
-                    let inside = false;
-                    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-                        const xi = poly[i][0], yi = poly[i][1];
-                        const xj = poly[j][0], yj = poly[j][1];
-                        const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-                        if (intersect) inside = !inside;
-                    }
-                    return inside;
-                }
-
                 const data = originalImageData.data;
                 const w = canvas.width, h = canvas.height;
-                // Build local mask for current lasso operation
+                // Build local mask for current lasso operation with supersampling + simplification
+                const simplified = simplifyPath(lassoPath, 1.5);
+                const baseMask = rasterizeLassoMask(simplified, w, h, 2);
                 const localMask = new Uint8Array(w * h);
-                
-                // Apply selection
+
                 for (let y = 0; y < h; y++) {
                     for (let x = 0; x < w; x++) {
-                        if (isPointInPolygon(x, y, lassoPath)) {
-                            const idx = (y * w + x) * 4;
-                            const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-                            
-                            let shouldSelect = false;
-                            if (lassoMode === 'all') {
-                                shouldSelect = true;
-                            } else if (lassoMode === 'white') {
-                                // White: high brightness (r, g, b all > 200)
-                                shouldSelect = r > 200 && g > 200 && b > 200;
-                            } else if (lassoMode === 'black') {
-                                // Black: low brightness (r, g, b all < 50)
-                                shouldSelect = r < 50 && g < 50 && b < 50;
-                            }
-                            
-                            if (shouldSelect) {
-                                const maskIdx = y * w + x;
-                                localMask[maskIdx] = 1;
-                            }
+                        const maskIdx = y * w + x;
+                        if (baseMask[maskIdx] !== 1) continue;
+                        const idx = maskIdx * 4;
+                        const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+
+                        let shouldSelect = false;
+                        if (lassoMode === 'all') {
+                            shouldSelect = true;
+                        } else if (lassoMode === 'white') {
+                            shouldSelect = r > 200 && g > 200 && b > 200;
+                        } else if (lassoMode === 'black') {
+                            shouldSelect = r < 50 && g < 50 && b < 50;
+                        }
+
+                        if (shouldSelect) {
+                            localMask[maskIdx] = 1;
                         }
                     }
                 }
+
+                const smoothedLocal = smoothMaskLight(localMask, w, h, 1);
                 
                 // Dilate only the local selection, then merge
-                const dilatedLocal = dilateBinary(localMask, selectionDilationPx);
+                const dilatedLocal = expandMaskSmooth(smoothedLocal, selectionDilationPx);
                 if (editMode === 'add') {
                     for (let i = 0; i < selectionMask.length; i++) {
                         if (dilatedLocal[i] === 1) selectionMask[i] = 1;
@@ -1153,9 +1488,9 @@
                 ctx.strokeStyle = editMode === 'add' ? '#0064ff' : '#ff6400';
                 ctx.lineWidth = 3;
                 ctx.beginPath();
-                ctx.moveTo(lassoPath[0][0], lassoPath[0][1]);
-                for (let i = 1; i < lassoPath.length; i++) {
-                    ctx.lineTo(lassoPath[i][0], lassoPath[i][1]);
+                ctx.moveTo(simplified[0][0], simplified[0][1]);
+                for (let i = 1; i < simplified.length; i++) {
+                    ctx.lineTo(simplified[i][0], simplified[i][1]);
                 }
                 ctx.closePath();
                 ctx.stroke();
@@ -1192,8 +1527,9 @@
                     stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
                 }
 
-                // Dilate only the local selection, then merge
-                const dilatedLocal = dilateBinary(localMask, selectionDilationPx);
+                // Light smoothing + dilation only the local selection, then merge
+                const smoothedLocal = smoothMaskLight(localMask, w, h, 1);
+                const dilatedLocal = expandMaskSmooth(smoothedLocal, selectionDilationPx);
                 if (editMode === 'add') {
                     for (let i = 0; i < selectionMask.length; i++) {
                         if (dilatedLocal[i] === 1) selectionMask[i] = 1;
@@ -1261,23 +1597,21 @@
                 ctx.putImageData(originalImageData, 0, 0);
             };
             
-            document.getElementById('confirmSelection').onclick = () => {
-                // Create final selection image with white background and black for selected areas
-                const finalSelection = ctx.createImageData(canvas.width, canvas.height);
-                const finalData = finalSelection.data;
-                
-                // Fill with white
-                for (let i = 0; i < finalData.length; i += 4) {
-                    finalData[i] = 255; finalData[i+1] = 255; finalData[i+2] = 255; finalData[i+3] = 255;
-                }
-                
-                // Set selected pixels to black
+            document.getElementById('reverseSelection').onclick = () => {
+                saveSelectionState();
+                // Invert the selection
                 for (let i = 0; i < selectionMask.length; i++) {
-                    if (selectionMask[i] === 1) {
-                        const idx = i * 4;
-                        finalData[idx] = 0; finalData[idx+1] = 0; finalData[idx+2] = 0; finalData[idx+3] = 255;
-                    }
+                    selectionMask[i] = selectionMask[i] === 1 ? 0 : 1;
                 }
+                redrawWithSelection();
+            };
+            
+            document.getElementById('confirmSelection').onclick = () => {
+                // Light smoothing to preserve details
+                const smoothedMask = smoothSelectionMask(selectionMask, canvas.width, canvas.height, 2);
+
+                // Supersample with minimal blur - just enough to anti-alias pixel edges
+                const finalSelection = renderSmoothedSelection(smoothedMask, canvas.width, canvas.height, 6, 0.8);
                 
                 // Create temporary canvas to generate data URL
                 const tempCanvas = document.createElement('canvas');
@@ -1314,6 +1648,7 @@
                 }
                 if (allSelected) {
                     document.getElementById('generateSTL').style.display = 'block';
+                    document.getElementById('aaControlsPanel').style.display = 'flex';
                 }
                 
                 alert(`Layer ${currentLayerIndex + 1} selection saved! You can continue adding or subtracting areas.`);
@@ -1364,15 +1699,35 @@
                     positionsArray.push(posVal === 'same' ? 'same' : 'stack');
                 }
                 
-                document.getElementById('status').textContent = 'Generating STL files...';
+                // Show loading spinner
+                document.getElementById('loadingSpinner').style.display = 'block';
+                document.getElementById('status').textContent = '';
                 
+                const antiAliasing = document.getElementById('antiAliasing').checked;
+                const edgeThreshold = parseInt(document.getElementById('edgeThreshold').value, 10);
+                const aaUpsample = parseInt(document.getElementById('aaUpsample').value, 10);
+                const aaSigma = parseFloat(document.getElementById('aaSigma').value);
+
                 const response = await fetch('/generate_stl', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ layers: layersArray, num_layers: numLayers, heights: heightsArray, positions: positionsArray, dilation: selectionDilationPx })
+                    body: JSON.stringify({
+                        layers: layersArray,
+                        num_layers: numLayers,
+                        heights: heightsArray,
+                        positions: positionsArray,
+                        dilation: selectionDilationPx,
+                        anti_aliasing: antiAliasing,
+                        edge_threshold: Number.isFinite(edgeThreshold) ? edgeThreshold : 50,
+                        aa_upsample: Number.isFinite(aaUpsample) ? aaUpsample : 6,
+                        aa_sigma: Number.isFinite(aaSigma) ? aaSigma : 0.35
+                    })
                 });
                 
                 const data = await response.json();
+                
+                // Hide loading spinner
+                document.getElementById('loadingSpinner').style.display = 'none';
                 
                 if (data.error) {
                     alert('Error generating STL: ' + data.error);
@@ -1391,6 +1746,8 @@
                 console.error('Error:', error);
                 alert('Error: ' + error.message);
                 document.getElementById('status').textContent = 'Error generating STL files';
+                // Hide loading spinner on error
+                document.getElementById('loadingSpinner').style.display = 'none';
             }
         });
     </script>

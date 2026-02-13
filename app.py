@@ -2,10 +2,13 @@
 from flask import Flask, render_template, request, jsonify
 import requests
 import os
-from PIL import Image
+from PIL import Image, ImageFilter
 import io
 import base64
 import zipfile
+import numpy as np
+from scipy import interpolate, ndimage
+from skimage import measure, transform, filters
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 
@@ -57,6 +60,64 @@ def generate_images():
         print(f"ERROR - Details: {error_response}")
         return jsonify({'error': f'API Error {response.status_code}: {error_response}'})
 
+@app.route('/fast_generate_stl', methods=['POST'])
+def fast_generate_stl():
+    """Fast STL generation - extract main shape, fill solid, and generate STL."""
+    data = request.json
+    image_b64 = data['image']
+    height_mm = float(data.get('height', 5.0))
+    
+    try:
+        # Decode base64 image
+        image_data = base64.b64decode(image_b64)
+        image = Image.open(io.BytesIO(image_data))
+        
+        # Convert to grayscale
+        image = image.convert('L')
+        width, height = image.size
+        
+        # Extract black outlines and fill inside
+        # 1. Threshold to binary (find black parts)
+        threshold = 128
+        binary = image.point(lambda p: 255 if p >= threshold else 0).convert('L')
+        
+        # 2. Invert (so black becomes white, white becomes black)
+        binary = binary.point(lambda p: 255 - p)
+        
+        # 3. Find contours and fill them
+        mask_array = np.array(binary) > 128
+        
+        # Use morphological closing to fill gaps in outlines
+        from scipy.ndimage import binary_fill_holes, binary_closing
+        
+        # Close small gaps in the outline
+        mask_array = binary_closing(mask_array, structure=np.ones((5, 5)))
+        
+        # Fill holes to create solid shape
+        mask_array = binary_fill_holes(mask_array)
+        
+        # Generate STL from the filled mask
+        stl_content = generate_stl_from_contours(
+            mask_array,
+            width,
+            height,
+            z_offset=0,
+            thickness=height_mm,
+            aa_enabled=True,
+            aa_upsample=2,
+            aa_sigma=0.5
+        )
+        
+        # Return STL directly (no ZIP for single file)
+        stl_b64 = base64.b64encode(stl_content.encode('utf-8')).decode('utf-8')
+        
+        return jsonify({'stl_file': stl_b64})
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Fast generation error: {str(e)}'})
+
 @app.route('/generate_stl', methods=['POST'])
 def generate_stl():
     data = request.json
@@ -65,6 +126,25 @@ def generate_stl():
     heights = data.get('heights') or []
     positions = data.get('positions') or []
     dilation = int(data.get('dilation') or 2)
+    aa_enabled = bool(data.get('anti_aliasing', True))
+    edge_threshold = int(data.get('edge_threshold') or 50)
+    if edge_threshold < 0:
+        edge_threshold = 0
+    if edge_threshold > 255:
+        edge_threshold = 255
+    aa_upsample = int(data.get('aa_upsample') or 2)  # Reduced to 2 for speed
+    if aa_upsample < 1:
+        aa_upsample = 1
+    if aa_upsample > 2:  # Max 2x upsampling
+        aa_upsample = 2
+    try:
+        aa_sigma = float(data.get('aa_sigma') or 0.5)  # Reduced for speed
+    except Exception:
+        aa_sigma = 0.5
+    if aa_sigma < 0:
+        aa_sigma = 0
+    if aa_sigma > 2.0:
+        aa_sigma = 2.0
     # Normalize heights to floats with a sane default
     height_values = []
     for i in range(num_layers):
@@ -94,25 +174,32 @@ def generate_stl():
             image_data = base64.b64decode(layer_image_b64)
             image = Image.open(io.BytesIO(image_data))
             
-            # Convert to grayscale and get black pixels
+            # Convert to grayscale
             image = image.convert('L')
             width, height = image.size
-            pixels = image.load()
             
-            # Find black pixels (threshold < 50)
-            black_points = []
-            for y in range(height):
-                for x in range(width):
-                    if pixels[x, y] < 50:  # Black pixel
-                        black_points.append((x, y))
+            # Optimized smoothing - skip upsampling here since contour generation handles it
+            if aa_enabled:
+                mask = smooth_binary_mask(image, threshold=edge_threshold, blur_radius=0.8, close_size=3, open_size=2)
+            else:
+                mask = smooth_binary_mask(image, threshold=edge_threshold, blur_radius=0, close_size=1, open_size=1)
             
-            if len(black_points) == 0:
-                return jsonify({'error': f'No black pixels found in layer {layer_idx + 1}'})
+            # Convert PIL image to numpy array for contour extraction
+            mask_array = np.array(mask) > 128
             
-            # Generate STL for this layer; z_offset from previous layer heights
+            # Generate STL for this layer using contour-based approach
             z_offset = z_offsets[layer_idx]
             thickness = height_values[layer_idx]
-            stl_content = generate_stl_from_points(black_points, width, height, z_offset, thickness, dilation)
+            stl_content = generate_stl_from_contours(
+                mask_array,
+                width,
+                height,
+                z_offset,
+                thickness,
+                aa_enabled=aa_enabled,
+                aa_upsample=aa_upsample,
+                aa_sigma=aa_sigma
+            )
             
             stl_files.append({
                 'name': f'layer_{layer_idx + 1}.stl',
@@ -128,22 +215,491 @@ def generate_stl():
         zip_buffer.seek(0)
         zip_b64 = base64.b64encode(zip_buffer.read()).decode('utf-8')
         
+        # Verify we have valid STL files
+        if not stl_files:
+            return jsonify({'error': 'No valid geometry generated. Try adjusting parameters.'})
+        
+        # Check each STL for validity
+        for stl_file in stl_files:
+            content = stl_file['content']
+            if 'facet' not in content or content.count('endfacet') == 0:
+                print(f"Warning: {stl_file['name']} has no valid facets")
+        
         return jsonify({'zip_file': zip_b64, 'num_layers': num_layers})
     
     except Exception as e:
-        return jsonify({'error': str(e)})
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Generation error: {str(e)}'})
 
-def generate_stl_from_points(points, width, height, z_offset, thickness, dilation):
+def generate_stl_from_contours(mask_array, width, height, z_offset, thickness, aa_enabled=True, aa_upsample=6, aa_sigma=0.35):
+    """Generate STL with smooth edges using optimized contour extraction."""
+    print(f"=== Starting STL generation: shape={mask_array.shape}, z_offset={z_offset}, thickness={thickness} ===")
+    
+    if not np.any(mask_array):
+        return "solid layer\nendsolid layer\n"
+
+    # Aggressive optimization - minimal upsampling
+    upsample_factor = min(2, aa_upsample) if aa_enabled else 1
+    scale = 0.1 / max(1, upsample_factor)
+    stl_lines = ["solid layer\n"]
+
+    try:
+        # Fast smoothing path
+        if aa_enabled and upsample_factor > 1:
+            # Light Gaussian with reduced sigma for speed
+            smooth_field = filters.gaussian(
+                mask_array.astype(float),
+                sigma=min(1.0, aa_sigma),
+                preserve_range=True
+            )
+            
+            # Fast linear upsampling only
+            smooth_field = transform.rescale(
+                smooth_field,
+                upsample_factor,
+                order=1,  # Linear is fastest
+                anti_aliasing=False,
+                preserve_range=True
+            )
+            smooth_field = np.clip(smooth_field, 0, 1)
+        else:
+            # No upsampling - use mask directly for maximum speed
+            smooth_field = mask_array.astype(float)
+
+        height_rescaled, width_rescaled = smooth_field.shape
+        print(f"  Upsampled to {width_rescaled}x{height_rescaled}, scale={scale}")
+
+        # Find contours at 0.5 level from smooth field
+        contours = measure.find_contours(smooth_field, 0.5)
+        
+        if not contours:
+            print("  No contours found, using fallback")
+            return generate_stl_from_points_fallback(mask_array, width, height, z_offset, thickness)
+
+        # Filter tiny contours with lower threshold for better detail
+        filtered = [c for c in contours if len(c) >= 3 and abs(polygon_area(c)) >= 2.0]
+        
+        if not filtered:
+            print("  No valid contours after filtering")
+            return generate_stl_from_points_fallback(mask_array, width, height, z_offset, thickness)
+
+        print(f"  Processing {len(filtered)} contours")
+        
+        # Process each contour
+        for contour in filtered:
+            # Aggressive simplification for speed
+            contour_simplified = simplify_contour(contour, epsilon=0.8)
+            
+            if len(contour_simplified) < 3:
+                continue
+
+            # Skip Chaikin smoothing for speed - contour is already smooth from Gaussian
+            vertices_2d = ensure_ccw(contour_simplified)
+            
+            # Quick duplicate removal
+            unique_verts = [vertices_2d[0]]
+            for i in range(1, len(vertices_2d)):
+                if np.linalg.norm(vertices_2d[i] - unique_verts[-1]) > 0.1:
+                    unique_verts.append(vertices_2d[i])
+            vertices_2d = np.array(unique_verts)
+            
+            if len(vertices_2d) < 3:
+                continue
+
+            # Use faster ear clipping triangulation
+            triangles = triangulate_polygon_earclip(vertices_2d)
+            if not triangles:
+                continue
+
+            # Bottom face
+            for tri in triangles:
+                v1 = [vertices_2d[tri[0]][1] * scale, (height_rescaled - vertices_2d[tri[0]][0]) * scale, z_offset]
+                v2 = [vertices_2d[tri[1]][1] * scale, (height_rescaled - vertices_2d[tri[1]][0]) * scale, z_offset]
+                v3 = [vertices_2d[tri[2]][1] * scale, (height_rescaled - vertices_2d[tri[2]][0]) * scale, z_offset]
+                tri_str = create_triangle(v1, v2, v3)
+                if tri_str:
+                    stl_lines.append(tri_str)
+
+            # Top face (reversed winding)
+            z_top = z_offset + thickness
+            for tri in triangles:
+                v1 = [vertices_2d[tri[2]][1] * scale, (height_rescaled - vertices_2d[tri[2]][0]) * scale, z_top]
+                v2 = [vertices_2d[tri[1]][1] * scale, (height_rescaled - vertices_2d[tri[1]][0]) * scale, z_top]
+                v3 = [vertices_2d[tri[0]][1] * scale, (height_rescaled - vertices_2d[tri[0]][0]) * scale, z_top]
+                tri_str = create_triangle(v1, v2, v3)
+                if tri_str:
+                    stl_lines.append(tri_str)
+
+            # Side faces
+            for i in range(len(vertices_2d)):
+                p1 = vertices_2d[i]
+                p2 = vertices_2d[(i + 1) % len(vertices_2d)]
+
+                v1_b = [p1[1] * scale, (height_rescaled - p1[0]) * scale, z_offset]
+                v2_b = [p2[1] * scale, (height_rescaled - p2[0]) * scale, z_offset]
+                v1_t = [p1[1] * scale, (height_rescaled - p1[0]) * scale, z_top]
+                v2_t = [p2[1] * scale, (height_rescaled - p2[0]) * scale, z_top]
+
+                tri_str = create_triangle(v1_b, v2_b, v1_t)
+                if tri_str:
+                    stl_lines.append(tri_str)
+                tri_str = create_triangle(v2_b, v2_t, v1_t)
+                if tri_str:
+                    stl_lines.append(tri_str)
+
+    except Exception as e:
+        print(f"STL generation error: {e}")
+        import traceback
+        traceback.print_exc()
+        return generate_stl_from_points_fallback(mask_array, width, height, z_offset, thickness)
+
+    if stl_lines.count('facet') == 0:
+        print("  No triangles generated")
+        return generate_stl_from_points_fallback(mask_array, width, height, z_offset, thickness)
+
+    stl_lines.append("endsolid layer\n")
+    print(f"  Generated {stl_lines.count('facet')} triangles")
+    return ''.join(stl_lines)
+
+def laplacian_smooth_vertices(vertices, iterations=3, factor=0.3):
+    """Apply Laplacian smoothing to vertices for mesh retopology.
+    Smooths vertex positions to reduce jaggedness while preserving shape.
+    """
+    if len(vertices) < 3:
+        return vertices
+    
+    smoothed = np.array(vertices, dtype=float)
+    n = len(smoothed)
+    
+    for _ in range(iterations):
+        new_verts = np.copy(smoothed)
+        for i in range(n):
+            # Get neighbors
+            prev_idx = (i - 1) % n
+            next_idx = (i + 1) % n
+            
+            # Laplacian: average of neighbors
+            laplacian = (smoothed[prev_idx] + smoothed[next_idx]) / 2.0
+            
+            # Move vertex towards Laplacian (weighted)
+            new_verts[i] = smoothed[i] + factor * (laplacian - smoothed[i])
+        
+        smoothed = new_verts
+    
+    return smoothed
+
+def smooth_contour_fourier(contour, keep_ratio=0.08):
+    """Smooth contour using Fourier low-pass filtering.
+    keep_ratio controls how many low-frequency components are retained.
+    """
+    if len(contour) < 6:
+        return contour
+
+    pts = np.array(contour, dtype=float)
+
+    # Ensure closed contour for smooth periodic signal
+    if not np.allclose(pts[0], pts[-1]):
+        pts = np.vstack([pts, pts[0]])
+
+    complex_pts = pts[:, 1] + 1j * pts[:, 0]
+    n = len(complex_pts)
+
+    # FFT and keep low-frequency components
+    spectrum = np.fft.fft(complex_pts)
+    keep = max(3, int(n * keep_ratio))
+    filtered = np.zeros_like(spectrum)
+
+    # Keep DC and lowest frequencies on both ends
+    filtered[:keep] = spectrum[:keep]
+    filtered[-keep:] = spectrum[-keep:]
+
+    smoothed = np.fft.ifft(filtered)
+    out = np.column_stack([smoothed.imag, smoothed.real])
+
+    # Drop duplicated endpoint
+    return out[:-1]
+
+def smooth_contour_savgol(contour, window=11, polyorder=3):
+    """Smooth contour using Savitzky-Golay filter.
+    Preserves features while creating naturally smooth curves.
+    """
+    from scipy.signal import savgol_filter
+    
+    if len(contour) < window + 2:
+        return contour
+    
+    pts = np.array(contour, dtype=float)
+    
+    # Ensure window is odd and smaller than contour
+    window = min(window, len(pts))
+    if window % 2 == 0:
+        window -= 1
+    window = max(5, window)
+    
+    # For closed contours, extend the data
+    pts_extended = np.vstack([pts[-window//2:], pts, pts[:window//2]])
+    
+    # Apply Savitzky-Golay filter to each dimension
+    y_smooth = savgol_filter(pts_extended[:, 0], window, polyorder, mode='wrap')
+    x_smooth = savgol_filter(pts_extended[:, 1], window, polyorder, mode='wrap')
+    
+    # Extract the smoothed interior points
+    start = window // 2
+    end = start + len(pts)
+    
+    return np.column_stack([y_smooth[start:end], x_smooth[start:end]])
+
+def chaikin_smooth(points, iterations=2):
+    """Chaikin subdivision to smooth polygonal chains."""
+    if len(points) < 3:
+        return points
+
+    pts = np.array(points, dtype=float)
+    for _ in range(iterations):
+        new_pts = []
+        for i in range(len(pts)):
+            p0 = pts[i]
+            p1 = pts[(i + 1) % len(pts)]
+            q = 0.75 * p0 + 0.25 * p1
+            r = 0.25 * p0 + 0.75 * p1
+            new_pts.append(q)
+            new_pts.append(r)
+        pts = np.array(new_pts)
+    return pts
+
+def generate_stl_from_points_fallback(mask_array, width, height, z_offset, thickness):
+    """Fallback: Generate STL with smoothed contours from binary mask."""
+    # Apply smoothing to the mask before contour extraction
+    smooth_mask = filters.gaussian(mask_array.astype(float), sigma=1.5, preserve_range=True)
+    
+    # Find contours with lower threshold
+    contours = measure.find_contours(smooth_mask, 0.3)
+    
+    if not contours:
+        # Ultimate fallback to point-based
+        points_indices = np.argwhere(mask_array)
+        if len(points_indices) == 0:
+            return "solid layer\nendsolid layer\n"
+        points = [(int(pt[1]), int(pt[0])) for pt in points_indices]
+        return generate_stl_from_points(points, width, height, z_offset, thickness, 
+                                         dilation=2, block_size=1, scale=0.1)
+    
+    # Process largest contour - skip Chaikin for speed
+    contour = max(contours, key=lambda c: abs(polygon_area(c)))
+    contour = simplify_contour(contour, epsilon=1.0)  # Aggressive simplification
+    
+    if len(contour) < 3:
+        return "solid layer\nendsolid layer\n"
+    
+    scale = 0.1
+    stl_lines = ["solid layer\n"]
+    
+    vertices_2d = ensure_ccw(contour)
+    triangles = triangulate_polygon_earclip(vertices_2d)
+    
+    if not triangles:
+        return "solid layer\nendsolid layer\n"
+    
+    z_top = z_offset + thickness
+    
+    # Bottom face
+    for tri in triangles:
+        v1 = [vertices_2d[tri[0]][1] * scale, (height - vertices_2d[tri[0]][0]) * scale, z_offset]
+        v2 = [vertices_2d[tri[1]][1] * scale, (height - vertices_2d[tri[1]][0]) * scale, z_offset]
+        v3 = [vertices_2d[tri[2]][1] * scale, (height - vertices_2d[tri[2]][0]) * scale, z_offset]
+        stl_lines.append(create_triangle(v1, v2, v3))
+    
+    # Top face
+    for tri in triangles:
+        v1 = [vertices_2d[tri[2]][1] * scale, (height - vertices_2d[tri[2]][0]) * scale, z_top]
+        v2 = [vertices_2d[tri[1]][1] * scale, (height - vertices_2d[tri[1]][0]) * scale, z_top]
+        v3 = [vertices_2d[tri[0]][1] * scale, (height - vertices_2d[tri[0]][0]) * scale, z_top]
+        stl_lines.append(create_triangle(v1, v2, v3))
+    
+    # Side faces
+    for i in range(len(vertices_2d)):
+        p1 = vertices_2d[i]
+        p2 = vertices_2d[(i + 1) % len(vertices_2d)]
+        v1_b = [p1[1] * scale, (height - p1[0]) * scale, z_offset]
+        v2_b = [p2[1] * scale, (height - p2[0]) * scale, z_offset]
+        v1_t = [p1[1] * scale, (height - p1[0]) * scale, z_top]
+        v2_t = [p2[1] * scale, (height - p2[0]) * scale, z_top]
+        stl_lines.append(create_triangle(v1_b, v2_b, v1_t))
+        stl_lines.append(create_triangle(v2_b, v2_t, v1_t))
+    
+    stl_lines.append("endsolid layer\n")
+    return ''.join(stl_lines)
+
+def simplify_contour(contour, epsilon=0.5):
+    """Ramer-Douglas-Peucker contour simplification."""
+    if len(contour) < 3:
+        return contour
+    
+    dmax = 0
+    index = 0
+    for i in range(1, len(contour) - 1):
+        d = point_to_line_distance(contour[i], contour[0], contour[-1])
+        if d > dmax:
+            dmax = d
+            index = i
+    
+    if dmax > epsilon:
+        left = simplify_contour(contour[:index+1], epsilon)
+        right = simplify_contour(contour[index:], epsilon)
+        return np.vstack([left[:-1], right])
+    
+    return np.array([contour[0], contour[-1]])
+
+def point_to_line_distance(point, line_start, line_end):
+    """Distance from point to line segment."""
+    px, py = point
+    x1, y1 = line_start
+    x2, y2 = line_end
+    
+    dx = x2 - x1
+    dy = y2 - y1
+    
+    if dx == 0 and dy == 0:
+        return np.sqrt((px - x1)**2 + (py - y1)**2)
+    
+    t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / (dx*dx + dy*dy)))
+    closest_x = x1 + t * dx
+    closest_y = y1 + t * dy
+    
+    return np.sqrt((px - closest_x)**2 + (py - closest_y)**2)
+
+def smooth_contour_spline(contour, smoothing=0.005):
+    """Smooth contour using B-spline interpolation with light smoothing to preserve shape."""
+    if len(contour) < 4:
+        return contour
+    
+    try:
+        # Close the contour for seamless interpolation
+        contour_closed = np.vstack([contour, contour[0:1]])
+        
+        # Parameterize by distance along contour
+        distances = np.cumsum(np.sqrt(np.sum(np.diff(contour_closed, axis=0)**2, axis=1)))
+        distances = np.insert(distances, 0, 0)
+        
+        # Spline fit with light smoothing to keep fine details
+        tck_y = interpolate.splrep(distances, contour_closed[:, 0], s=smoothing, k=min(3, len(contour_closed)-1))
+        tck_x = interpolate.splrep(distances, contour_closed[:, 1], s=smoothing, k=min(3, len(contour_closed)-1))
+        
+        # Evaluate spline at high resolution for smooth edges
+        num_points = min(len(contour) * 4, 600)  # Higher resolution for smooth curves
+        distances_smooth = np.linspace(0, distances[-1], num_points)
+        y_smooth = interpolate.splev(distances_smooth, tck_y)
+        x_smooth = interpolate.splev(distances_smooth, tck_x)
+        
+        return np.column_stack([y_smooth[:-1], x_smooth[:-1]])  # Remove duplicated endpoint
+    except:
+        return contour
+
+def triangulate_polygon(vertices):
+    """Simple triangulation using fan triangulation from first vertex."""
+    triangles = []
+    for i in range(1, len(vertices) - 1):
+        triangles.append([0, i, i + 1])
+    return triangles
+
+def polygon_area(points):
+    """Signed polygon area for (y, x) points."""
+    area = 0.0
+    n = len(points)
+    for i in range(n):
+        y1, x1 = points[i]
+        y2, x2 = points[(i + 1) % n]
+        area += x1 * y2 - x2 * y1
+    return area * 0.5
+
+def ensure_ccw(points):
+    """Ensure points are in counter-clockwise order."""
+    if polygon_area(points) < 0:
+        return points[::-1]
+    return points
+
+def triangulate_polygon_earclip(vertices):
+    """Ear clipping triangulation for simple (possibly concave) polygons.
+    Returns list of index triples.
+    """
+    n = len(vertices)
+    if n < 3:
+        return []
+
+    indices = list(range(n))
+    triangles = []
+
+    def is_convex(a, b, c):
+        ay, ax = vertices[a]
+        by, bx = vertices[b]
+        cy, cx = vertices[c]
+        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) >= 0
+
+    def point_in_triangle(p, a, b, c):
+        py, px = vertices[p]
+        ay, ax = vertices[a]
+        by, bx = vertices[b]
+        cy, cx = vertices[c]
+
+        v0x, v0y = cx - ax, cy - ay
+        v1x, v1y = bx - ax, by - ay
+        v2x, v2y = px - ax, py - ay
+
+        dot00 = v0x * v0x + v0y * v0y
+        dot01 = v0x * v1x + v0y * v1y
+        dot02 = v0x * v2x + v0y * v2y
+        dot11 = v1x * v1x + v1y * v1y
+        dot12 = v1x * v2x + v1y * v2y
+
+        denom = dot00 * dot11 - dot01 * dot01
+        if denom == 0:
+            return False
+        inv = 1.0 / denom
+        u = (dot11 * dot02 - dot01 * dot12) * inv
+        v = (dot00 * dot12 - dot01 * dot02) * inv
+        return (u >= 0) and (v >= 0) and (u + v <= 1)
+
+    guard = 0
+    while len(indices) > 2 and guard < 10000:
+        guard += 1
+        ear_found = False
+        for i in range(len(indices)):
+            prev_i = indices[(i - 1) % len(indices)]
+            curr_i = indices[i]
+            next_i = indices[(i + 1) % len(indices)]
+
+            if not is_convex(prev_i, curr_i, next_i):
+                continue
+
+            is_ear = True
+            for other in indices:
+                if other in (prev_i, curr_i, next_i):
+                    continue
+                if point_in_triangle(other, prev_i, curr_i, next_i):
+                    is_ear = False
+                    break
+
+            if is_ear:
+                triangles.append([prev_i, curr_i, next_i])
+                indices.pop(i)
+                ear_found = True
+                break
+
+        if not ear_found:
+            break
+
+    return triangles
+
+def generate_stl_from_points(points, width, height, z_offset, thickness, dilation, block_size=1, scale=0.1):
     """Generate STL from 2D points as a manifold mesh with reduced triangles.
     - Removes isolated pixels
-    - Downsamples to 2px blocks to cut triangle count
     - Emits only exterior faces
     """
-    scale = 0.1  # mm per pixel
-    block = 2    # downsample factor to reduce triangle count
+    block = max(1, int(block_size))
 
     solid_name = "layer"
-    stl = f"solid {solid_name}\n"
+    stl_lines = ["solid layer\n"]
 
     # Filter out isolated pixels to smooth edges
     point_set = set(points)
@@ -200,12 +756,12 @@ def generate_stl_from_points(points, width, height, z_offset, thickness, dilatio
         z_top = z_offset + thickness
 
         # Bottom (always)
-        stl += create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d, z_bottom], [x3d + size, y3d - size, z_bottom])
-        stl += create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d - size, z_bottom], [x3d, y3d - size, z_bottom])
+        stl_lines.append(create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d, z_bottom], [x3d + size, y3d - size, z_bottom]))
+        stl_lines.append(create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d - size, z_bottom], [x3d, y3d - size, z_bottom]))
 
         # Top (always)
-        stl += create_triangle([x3d, y3d, z_top], [x3d + size, y3d - size, z_top], [x3d + size, y3d, z_top])
-        stl += create_triangle([x3d, y3d, z_top], [x3d, y3d - size, z_top], [x3d + size, y3d - size, z_top])
+        stl_lines.append(create_triangle([x3d, y3d, z_top], [x3d + size, y3d - size, z_top], [x3d + size, y3d, z_top]))
+        stl_lines.append(create_triangle([x3d, y3d, z_top], [x3d, y3d - size, z_top], [x3d + size, y3d - size, z_top]))
 
         # Helper to check neighbor
         def has_neighbor(dx, dy):
@@ -213,47 +769,125 @@ def generate_stl_from_points(points, width, height, z_offset, thickness, dilatio
 
         # Front (negative y in canvas after flip)
         if not has_neighbor(0, -1):
-            stl += create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d, z_top], [x3d + size, y3d, z_bottom])
-            stl += create_triangle([x3d, y3d, z_bottom], [x3d, y3d, z_top], [x3d + size, y3d, z_top])
+            stl_lines.append(create_triangle([x3d, y3d, z_bottom], [x3d + size, y3d, z_top], [x3d + size, y3d, z_bottom]))
+            stl_lines.append(create_triangle([x3d, y3d, z_bottom], [x3d, y3d, z_top], [x3d + size, y3d, z_top]))
 
         # Back (positive y)
         if not has_neighbor(0, 1):
-            stl += create_triangle([x3d, y3d - size, z_bottom], [x3d + size, y3d - size, z_bottom], [x3d + size, y3d - size, z_top])
-            stl += create_triangle([x3d, y3d - size, z_bottom], [x3d + size, y3d - size, z_top], [x3d, y3d - size, z_top])
+            stl_lines.append(create_triangle([x3d, y3d - size, z_bottom], [x3d + size, y3d - size, z_bottom], [x3d + size, y3d - size, z_top]))
+            stl_lines.append(create_triangle([x3d, y3d - size, z_bottom], [x3d + size, y3d - size, z_top], [x3d, y3d - size, z_top]))
 
         # Left (negative x)
         if not has_neighbor(-1, 0):
-            stl += create_triangle([x3d, y3d, z_bottom], [x3d, y3d - size, z_top], [x3d, y3d, z_top])
-            stl += create_triangle([x3d, y3d, z_bottom], [x3d, y3d - size, z_bottom], [x3d, y3d - size, z_top])
+            stl_lines.append(create_triangle([x3d, y3d, z_bottom], [x3d, y3d - size, z_top], [x3d, y3d, z_top]))
+            stl_lines.append(create_triangle([x3d, y3d, z_bottom], [x3d, y3d - size, z_bottom], [x3d, y3d - size, z_top]))
 
         # Right (positive x)
         if not has_neighbor(1, 0):
-            stl += create_triangle([x3d + size, y3d, z_bottom], [x3d + size, y3d, z_top], [x3d + size, y3d - size, z_top])
-            stl += create_triangle([x3d + size, y3d, z_bottom], [x3d + size, y3d - size, z_top], [x3d + size, y3d - size, z_bottom])
+            stl_lines.append(create_triangle([x3d + size, y3d, z_bottom], [x3d + size, y3d, z_top], [x3d + size, y3d - size, z_top]))
+            stl_lines.append(create_triangle([x3d + size, y3d, z_bottom], [x3d + size, y3d - size, z_top], [x3d + size, y3d - size, z_bottom]))
 
-    stl += f"endsolid {solid_name}\n"
-    return stl
+    stl_lines.append("endsolid layer\n")
+    return ''.join(stl_lines)
+
+def smooth_binary_mask(image, threshold=50, blur_radius=2.5, close_size=5, open_size=5):
+    """Create a smoothed binary mask to reduce jagged edges and tiny artifacts."""
+    # Foreground as white (255), background as black (0)
+    mask = image.point(lambda p: 255 if p < threshold else 0).convert('L')
+
+    # Close small gaps, then open to remove tiny spikes (size must be odd)
+    if close_size and close_size > 1:
+        # Ensure odd size
+        close_size = close_size if close_size % 2 == 1 else close_size + 1
+        mask = mask.filter(ImageFilter.MaxFilter(size=close_size))
+        mask = mask.filter(ImageFilter.MinFilter(size=close_size))
+    if open_size and open_size > 1:
+        # Ensure odd size
+        open_size = open_size if open_size % 2 == 1 else open_size + 1
+        mask = mask.filter(ImageFilter.MinFilter(size=open_size))
+        mask = mask.filter(ImageFilter.MaxFilter(size=open_size))
+
+    # Multi-pass Gaussian blur for smooth edges
+    if blur_radius and blur_radius > 0:
+        # First blur
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        mask = mask.point(lambda p: 255 if p >= 128 else 0)
+        # Second blur for final smoothing
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius * 0.7))
+        mask = mask.point(lambda p: 255 if p >= 128 else 0)
+
+    return mask
 
 def create_triangle(v1, v2, v3):
-    """Create a triangle facet in STL ASCII format with computed normal"""
+    """Create a triangle facet in STL ASCII format with computed normal.
+    Enhanced validation for PrusaSlicer compatibility."""
+    # Validate vertices are valid numbers
+    try:
+        for v in [v1, v2, v3]:
+            if len(v) != 3:
+                return ""
+            for coord in v:
+                # Handle numpy float types
+                if isinstance(coord, (int, float, np.floating)):
+                    val = float(coord)
+                    if val != val or abs(val) == float('inf'):  # NaN or inf check
+                        return ""
+                else:
+                    return ""
+    except:
+        return ""
+    
+    # Convert to float tuples
+    try:
+        v1 = tuple(float(x) for x in v1)
+        v2 = tuple(float(x) for x in v2)
+        v3 = tuple(float(x) for x in v3)
+    except:
+        return ""
+    
+    # Check for duplicate vertices (degenerate triangle)
+    eps = 1e-6
+    if (abs(v1[0] - v2[0]) < eps and abs(v1[1] - v2[1]) < eps and abs(v1[2] - v2[2]) < eps):
+        return ""
+    if (abs(v2[0] - v3[0]) < eps and abs(v2[1] - v3[1]) < eps and abs(v2[2] - v3[2]) < eps):
+        return ""
+    if (abs(v3[0] - v1[0]) < eps and abs(v3[1] - v1[1]) < eps and abs(v3[2] - v1[2]) < eps):
+        return ""
+    
     # Compute normal via cross product of (v2 - v1) x (v3 - v1)
-    ax, ay, az = v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]
-    bx, by, bz = v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2]
+    ax = v2[0] - v1[0]
+    ay = v2[1] - v1[1]
+    az = v2[2] - v1[2]
+    bx = v3[0] - v1[0]
+    by = v3[1] - v1[1]
+    bz = v3[2] - v1[2]
+    
     nx = ay * bz - az * by
     ny = az * bx - ax * bz
     nz = ax * by - ay * bx
-    length = (nx * nx + ny * ny + nz * nz) ** 0.5
-    if length == 0:
-        normal = (0.0, 0.0, 0.0)
-    else:
-        normal = (nx / length, ny / length, nz / length)
     
+    length = (nx * nx + ny * ny + nz * nz) ** 0.5
+    
+    # Skip degenerate triangles (zero area)
+    if length < 1e-9:
+        return ""
+    
+    # Normalize
+    nx /= length
+    ny /= length
+    nz /= length
+    
+    # Validate normals
+    if nx != nx or ny != ny or nz != nz or abs(nx) == float('inf') or abs(ny) == float('inf') or abs(nz) == float('inf'):
+        return ""
+    
+    # Format with consistent precision
     return (
-        f"  facet normal {normal[0]} {normal[1]} {normal[2]}\n"
+        f"  facet normal {nx:.6f} {ny:.6f} {nz:.6f}\n"
         f"    outer loop\n"
-        f"      vertex {v1[0]} {v1[1]} {v1[2]}\n"
-        f"      vertex {v2[0]} {v2[1]} {v2[2]}\n"
-        f"      vertex {v3[0]} {v3[1]} {v3[2]}\n"
+        f"      vertex {v1[0]:.6f} {v1[1]:.6f} {v1[2]:.6f}\n"
+        f"      vertex {v2[0]:.6f} {v2[1]:.6f} {v2[2]:.6f}\n"
+        f"      vertex {v3[0]:.6f} {v3[1]:.6f} {v3[2]:.6f}\n"
         f"    endloop\n"
         f"  endfacet\n"
     )
